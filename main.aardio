@@ -1,0 +1,301 @@
+//RUNAS//
+import win.ui;
+import win.version;
+import fsys;
+import fsys.ini;
+import fsys.lnk;
+import fsys.dlg.dir;
+import inet.http;
+import inet.url;
+import JSON;
+
+//0.基础组件定义
+var log = function(mainForm, msg, ...){
+    if(!mainForm.editLog || !mainForm.editLog.hwnd) return;
+    var t = time.now();
+    t.format = "%H:%M:%S"; 
+    var str = "[" + tostring(t) + "] " + tostring(msg);
+    if(...) str = str + " " + string.join({...}, " ");
+    mainForm.editLog.print(str);
+}
+/*DSG{{*/
+var mainForm = win.form(text="每日壁纸滚动器 — Daily Wallpaper Roller";right=495;bottom=375;bgcolor=0xFFFFFF;clipch=1;max=false)
+mainForm.add(
+btnChoose={cls="button";text="选择目录";left=325;top=105;right=405;bottom=130;font=LOGFONT(name='微软雅黑');z=4};
+btnReset={cls="button";text="重置";left=415;top=105;right=475;bottom=130;color=0xFF0000;font=LOGFONT(name='微软雅黑');z=10};
+btnRun={cls="button";text="开始执行同步逻辑";left=25;top=145;right=485;bottom=185;font=LOGFONT(h=-14;name='微软雅黑');z=5};
+chkAutoStart={cls="checkbox";text="开启自启";left=325;top=70;right=395;bottom=90;bgcolor=0xFFFFFF;font=LOGFONT(name='微软雅黑');z=12};
+chkShowForm={cls="checkbox";text="显示界面";left=405;top=70;right=475;bottom=90;bgcolor=0xFFFFFF;font=LOGFONT(name='微软雅黑');z=13};
+editAutoStart={cls="edit";left=85;top=70;right=315;bottom=95;background=16777215;edge=1;readonly=1;z=7};
+editLog={cls="edit";left=10;top=210;right=500;bottom=365;edge=1;hscroll=1;multiline=1;vscroll=1;z=1};
+editPath={cls="edit";left=85;top=105;right=315;bottom=130;edge=1;z=3};
+groupConfig={cls="groupbox";text="配置、状态、与操作";left=10;top=45;right=500;bottom=210;clip=1;clipch=1;edge=1;font=LOGFONT(h=-14;name='微软雅黑');transparent=1;z=11};
+lnkWebsite={cls="syslink";text="项目主页";left=440;top=355;right=495;bottom=370;align="center";font=LOGFONT(name='微软雅黑');transparent=1;z=8};
+static={cls="static";text="下载目录：";left=25;top=105;right=90;bottom=125;align="center";center=1;font=LOGFONT(name='微软雅黑');transparent=1;z=2};
+static1={cls="static";text="每日壁纸滚动器 — Daily Wallpaper Roller";left=20;top=13;right=320;bottom=33;center=1;font=LOGFONT(h=-14;name='微软雅黑';weight=700);transparent=1;z=14};
+static2={cls="static";text="自启路径：";left=25;top=70;right=90;bottom=90;align="center";center=1;font=LOGFONT(name='微软雅黑');transparent=1;z=6};
+statusInfo={cls="static";text="Powered by 在自由而蔚蓝的天空下 | Yan-ME.ToP";left=5;top=355;right=290;bottom=370;center=1;color=0x808080;transparent=1;z=9}
+)
+/*}}*/
+
+import win.ui.simpleWindow;
+win.ui.simpleWindow(mainForm);
+import win.region.round;
+win.region.round(mainForm);
+
+//1.环境初始化与配置加载
+var defaultPath = "/Wallpapers/";
+var iniPath = io.fullpath("/DWR_Config.ini");
+if(!io.exist(iniPath)){
+    var defaultConfig = "[Settings]
+ShowForm=1
+LastRunDate=0
+RollingDate=0
+LastIndex=0
+DownloadDir=/Wallpapers/
+;proxy=http://127.0.0.1:7890
+
+[Sources]
+1=https://cn.bing.com/HPImageArchive.aspx?format=js&idx=0&n=7&mkt=zh-CN
+2=http://open.iciba.com/dsapi/
+3=http://v3.wufazhuce.com:8000/api/hp/more/0
+4=https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=7&mkt=fr-FR
+
+[Wallpapers]
+";
+string.save(iniPath, defaultConfig);
+}
+
+var ini = fsys.ini(iniPath);
+var showForm = ini.read("Settings", "ShowForm", "1") == "1";
+
+var refreshPathUI = function(){
+    mainForm.editPath.text = ini.read("Settings", "DownloadDir", defaultPath);
+}
+refreshPathUI();
+
+//2.自启动文件管理逻辑
+var getAutoStartLnkPath = function(){
+    var startupDir = fsys.getSpecial(0x18 /*_CSIDL_COMMON_STARTUP*/) : fsys.getSpecial(0x7 /*_CSIDL_STARTUP*/);
+    if(!startupDir) return "";
+    return fsys.joinpath(startupDir, "MyDailyWallpaper.lnk");
+}
+
+var updateAutoStartUI = function(){
+    var lnkPath = getAutoStartLnkPath();
+    if(lnkPath && io.exist(lnkPath)){
+        mainForm.editAutoStart.text = lnkPath;
+        mainForm.editAutoStart.color = 0x008000;
+        mainForm.chkAutoStart.checked = true;
+    } else {
+        mainForm.editAutoStart.text = "自启动未启用 (自启路径正常)";
+        mainForm.editAutoStart.color = 0x0000FF;
+        mainForm.chkAutoStart.checked = false;
+    }
+}
+
+mainForm.chkAutoStart.oncommand = function(id,event){
+    var lnkPath = getAutoStartLnkPath();
+    if(mainForm.chkAutoStart.checked){
+        var lnk = fsys.lnk();
+        lnk.path = io._exepath; 
+        lnk.workingDir = io._exedir;
+        try {
+            lnk.save(lnkPath);
+            log(mainForm, "[自启动] 已创建自启动快捷方式");
+        } catch(e) {
+            log(mainForm, "[自启动] 权限不足，无法写入启动目录");
+            mainForm.chkAutoStart.checked = false;
+        }
+    } else {
+        io.remove(lnkPath);
+        log(mainForm, "[自启动] 已移除自启动快捷方式");
+    }
+    updateAutoStartUI();
+}
+
+// 2.1绑定显示界面复选框
+mainForm.chkShowForm.checked = (ini.read("Settings", "ShowForm", "1") == "1");
+mainForm.chkShowForm.oncommand = function(id,event){
+    ini.write("Settings", "ShowForm", mainForm.chkShowForm.checked ? "1" : "0");
+    log(mainForm, "[警告] 关闭界面后将一直静默运行,除非手动修改配置文件打开");
+    log(mainForm, "[配置] 界面显示已设置为: " + (mainForm.chkShowForm.checked ? "开启" : "关闭"));
+}
+
+//3.核心同步
+var runWallpaperLogic = function(){
+    var downloadPath = mainForm.editPath.text;
+    var wallpaperDir = io.fullpath(downloadPath);
+    if(!io.exist(wallpaperDir)) fsys.createDir(wallpaperDir);
+    
+    var today = time.now().format("%Y%m%d");
+    var lastRun = ini.read("Settings", "LastRunDate", "0");
+    var rolling = ini.read("Settings", "RollingDate", "0");
+    var lastIdx = ini.read("Settings", "LastIndex", "0");
+    
+    //3.1获取当前壁纸库数量
+    var wallSect = ini.getSection("Wallpapers");
+    var total = 0; for(k,v in wallSect) total++;
+
+    //3.2打印首行状态汇总
+    log(mainForm, string.format("[状态] [今日:%s] [滚动到:%s] [池剩余:%d/%d]", 
+        today, (rolling == "0" ? today : rolling), tonumber(lastIdx), total));
+    
+    if(today != lastRun){
+        log(mainForm, "[重置] 可能是新的一天.重置滚动日期回到今天");
+        lastRun = today; rolling = today; lastIdx = "0";
+        ini.write("Settings", "LastRunDate", today);
+        ini.write("Settings", "RollingDate", today);
+        ini.write("Settings", "LastIndex", "0");
+        ini.write("Wallpapers", null); ini.write("Wallpapers", "");
+        total = 0; //重置计数
+    }
+
+    if(tonumber(lastIdx) < total && total > 0){
+        var nextIdx = tonumber(lastIdx) + 1;
+        var fileName = wallSect[tostring(nextIdx)];
+        var fullPath = fsys.joinpath(wallpaperDir, fileName);
+        if(io.exist(fullPath)){
+            ::User32.SystemParametersInfo(0x14, 0, fullPath, 1 | 2);
+            ini.write("Settings", "LastIndex", tostring(nextIdx));
+            log(mainForm, "[切换壁纸]", fileName);
+        }
+    } else {
+        var rTime = (rolling == "" || rolling == "0") ? time.now() : time(rolling, "%Y%m%d");
+        if(total > 0){
+            if(math.abs(time.now().diffday(rTime)) >= 7) rTime = time.now(); 
+            else rTime.addday(-1);
+        }
+        //3.3进入多个来源依次搜索的逻辑
+        var targetDate = rTime.format("%Y%m%d");
+        log(mainForm, "[搜索] 目标日期:", targetDate);
+        ini.write("Settings", "RollingDate", targetDate);
+        ini.write("Settings", "LastIndex", "0");
+        ini.write("Wallpapers", null); ini.write("Wallpapers", "");
+
+        var sourcesSect = ini.getSection("Sources");
+        var sourceKeys = {}; 
+        for(k,v in sourcesSect) table.push(sourceKeys, k);
+        table.sort(sourceKeys);
+
+        for(idx=1; #sourceKeys; 1){
+            var key = sourceKeys[idx];
+            var sUrl = sourcesSect[key];
+            if(!sUrl) continue;
+            
+            var raw = inet.http().get(sUrl);
+            if(!raw) continue;
+            var j = JSON.parse(raw); if(!j) continue;
+            
+            var res;
+// 读取配置，准备根据域名精准投喂代理
+            var proxy = ini.read("Settings", "proxy"); 
+            var raw = inet.http(, string.find(sUrl, "bing.com") ? proxy : null).get(sUrl);
+            if(!raw) continue;
+            var j = JSON.parse(raw); if(!j) continue;
+            
+            var res;
+            if(string.find(sUrl, "bing.com") && j.images){
+                for(m=1; #j.images; 1){
+                    var img = j.images[m];
+                    if(img && string.replace(img.enddate, "\D", "") == targetDate){
+                        var u = inet.url.split(sUrl);
+                        var host = (u.protocol : "https") + "://" + u.host;
+                        var imgUrl = img.url;
+                        if(!string.find(imgUrl, "UHD")) imgUrl = string.replace(imgUrl, "1920x1080", "UHD");
+                        var id = string.match(imgUrl, "id=([^%_&]+)"); 
+                        if(!id) continue;
+                        res = { url = host + imgUrl; fileName = targetDate + "_" + id + "_UHD.jpg" };
+                        break;
+                    }
+                }
+            }
+            elseif(string.find(sUrl, "iciba.com") && j.dateline && string.replace(j.dateline, "\D", "") == targetDate){
+                res = { url = j.picture; fileName = targetDate + "_" + string.replace(j.note : "I", '[\/\\\:\*\?\""\<\>\|]', "") + ".png" };
+            } 
+            elseif(string.find(sUrl, "wufazhuce.com") && j.data){
+                for(m=1; #j.data; 1){
+                    var item = j.data[m];
+                    if(item && string.replace(string.left(item.hp_makettime : "", 10), "\D", "") == targetDate){
+                        var n = string.match(tostring(item.text_author_work : ""), "《(.+)》") : (item.hp_title : "O");
+                        res = { url = item.hp_img_original_url : item.hp_img_original_url; fileName = targetDate + "_" + string.replace(tostring(n), '[\/\\\:\*\?\""\<\>\|]', "") + ".jpg" };
+                        break;
+                    }
+                }
+            }
+            
+            if(res && res.url){
+                var exists = false;
+                var currentSect = ini.getSection("Wallpapers");
+                for(k,v in currentSect){ if(v == res.fileName){ exists = true; break; } }
+                
+                //3.4如果记录已存在且文件存在，跳过下载
+                if(exists && io.exist(fsys.joinpath(wallpaperDir, res.fileName))) continue;
+
+                var data = inet.http().get(res.url);
+                if(data){
+                    string.save(fsys.joinpath(wallpaperDir, res.fileName), data);
+                    var s = ini.getSection("Wallpapers");
+                    var c = 0; for(k,v in s) c++;
+                    ini.write("Wallpapers", tostring(c + 1), res.fileName);
+                    log(mainForm, "[下载]", res.fileName);
+                }
+            }
+        }
+        
+        var finalSect = ini.getSection("Wallpapers");
+        if(finalSect["1"]){
+            var fPath = fsys.joinpath(wallpaperDir, finalSect["1"]);
+            ::User32.SystemParametersInfo(0x14, 0, fPath, 1 | 2);
+            ini.write("Settings", "LastIndex", "1");
+            log(mainForm, "[切换壁纸]", finalSect["1"]);
+        }
+    }
+    log(mainForm, "[状态] 同步任务完成.");
+}
+
+//4.其他 UI 回调
+mainForm.btnChoose.oncommand = function(id,event){
+    var path = fsys.dlg.dir(,mainForm,"选择下载目录");
+    if(path){
+        ini.write("Settings", "DownloadDir", path);
+        refreshPathUI();
+        log(mainForm, "[配置] 目录变更为:", path);
+    }
+}
+
+mainForm.btnReset.oncommand = function(id,event){
+    ini.write("Settings", "DownloadDir", defaultPath);
+    refreshPathUI();
+    log(mainForm, "[配置] 重置为默认目录");
+}
+
+mainForm.btnRun.oncommand = function(id,event){
+    mainForm.btnRun.disabledText = "[状态] 正在执行查询切换";
+    runWallpaperLogic();
+    mainForm.btnRun.disabledText = null;
+}
+
+mainForm.setInterval(function(){
+    mainForm.statusInfo.text = string.format("%s | %s", time().format("%Y-%m-%d %H:%M:%S"), win.version.format());
+}, 1000);
+
+mainForm.lnkWebsite.link = "https://www.yan-me.top/20260211/";
+
+//5.启动提示和控制
+if(!showForm){
+    runWallpaperLogic();
+    win.quitMessage();
+} else {
+    mainForm.show();
+    updateAutoStartUI(); 
+    log(mainForm, "多源的 每日壁纸滚动器 — Daily Wallpaper Roller");
+    log(mainForm, "支持多来源滚动下载和日期向前滚动的双滚动模式");
+    log(mainForm, "");
+    log(mainForm, "默认适配bing中国、词霸、one一个，bing全球三类源");
+    log(mainForm, "其中bing全球支持按照模板配置链接格式无限添加国别");
+    log(mainForm, "特定节日bing全球会分地区推不一样壁纸(需改配置文件)");
+    log(mainForm, "");
+}
+
+win.loopMessage();
