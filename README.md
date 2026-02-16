@@ -2,7 +2,7 @@
 
 # 📑 多来源的每日壁纸滚动器 每日壁纸并设置的小工具
 ***DailyWallpaperRoller***
-[项目主页](https://www.yan-me.top/20260211/)
+***[项目主页](https://www.yan-me.top/20260211/)***
 </div>
 
 <p align="center">
@@ -13,8 +13,8 @@
 </p>
 
 ---
-适配了cnbing，词霸，ONE一个、bing全球，三类的每日壁纸提供方依次查询配置文件中这些提供方地址，
-查询下载每日壁纸，并设置为本机壁纸。如果今天的，壁纸滚动完了，就往前推一天，最大-7天
+适配了cnbing，词霸，ONE一个、bing全球，三类的每日壁纸提供方，依次查询配置文件中提供方地址。
+查询下载每日壁纸，并设置为本机壁纸。如果今天壁纸滚动完了，就往前推一天，最大-7天
 
 <img width="667" height="554" alt="DailyWallpaperRoller" src="https://github.com/user-attachments/assets/081763c2-81bd-4396-b0b1-3d9c1e991b11" />
 
